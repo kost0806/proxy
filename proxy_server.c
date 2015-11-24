@@ -26,7 +26,7 @@ void proxy_service(proxy *p, proxy_server *p_server) {
 		return;
 	}
 	proxy_get_request(p);
-	proxy_send_reequest(p);
+	proxy_send_request(p);
 	proxy_get_response(p);
 	proxy_send_response(p);
 }
