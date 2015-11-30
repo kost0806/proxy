@@ -45,7 +45,16 @@ int proxy_accept(proxy *p, proxy_server *p_server) {
 	return PROXY_ACCEPT_SUCCESS;
 }
 
-void proxy_get_request(proxy *p) {
+/*	클라이언트로부터 요청을 받는다.
+ *	@param
+ *	proxy *p : 클라이언트와 타겟 서버의 정보가 담긴 proxy 구조체의 포인터
+ *
+ *	@return
+ *	FLAG
+ *		PROXY_GET_REQUEST_FAILED : 클라이언트 request 받기 실패
+ *		PROXY_GET_REQUEST_SUCCESS : 클라이언트 request 받기 성공
+ */
+int proxy_get_request(proxy *p) {
 	struct log log_buf;
 	char buf[REQUEST_BUF_SIZE];
 	char ip_buf[16];
@@ -55,29 +64,128 @@ void proxy_get_request(proxy *p) {
 	//memset(log_buf, 0, sizeof(log_buf));
 
 	n = read(p->client_fd, buf, REQUEST_BUF_SIZE);
+	if (n < 0)
+		return PROXY_GET_REQUEST_FAILED;
+	else if (n == 0)
+		return PROXY_GET_REQUEST_EMPTY;
 
 	inet_ntop(AF_INET, &(p->client.sin_addr.s_addr), ip_buf, sizeof(ip_buf));
 	fprintf(stdout, "from %s read[%d]:\n%s\n", ip_buf, n, buf);
+	strncpy(p->last_request, buf, PROXY_LAST_REQ_SIZE);
 
 	strcpy(log_buf.ip, ip_buf);
 	log_buf.log_time = time(NULL);
 	log_buf.size = (size_t)n;
 	sscanf(buf, "GET %s", log_buf.url);
+	complete_proxy_struct(p);
 	proxy_log(log_buf);
+
+	return PROXY_GET_REQUEST_SUCCESS;
 }
 
-void proxy_send_request(proxy *p) {
+/*	타겟 서버로 리퀘스트 전달
+ *
+ *	@param
+ *	proxy *p : 클라이언트와 타겟 서버의 정보가 담긴 proxy 구조체의 포인터
+ *
+ *	@return
+ *	FLAG
+ *		PROXY_SEND_REQUEST_SUCCESS : 타겟서버로 request 전송 성공
+ *		PROXY_SEND_REQUEST_FAILED_S : 타겟서버로 request 전송 실패(socket error)
+ *		PROXY_SEND_REQUEST_FAILED_C : 타겟서버로 request 전송 실패(connect error)
+ */
+int proxy_send_request(proxy *p) {
+	char request_buf[REQUEST_BUF_SIZE];
+	char last_req_tmp[REQUEST_BUF_SIZE];
+	char *last_req_ptr;
+	char *req_buf_ptr = request_buf;
+	char *t, *bp;
 
+	char first_line[3][100];
+	char file[100];
+
+	char ip_buf[16];
+	int n, cnt = 0, i, k = 0;
+
+	memset(request_buf, 0, REQUEST_BUF_SIZE);
+	memset(file, 0, 100);
+
+	if ((p->server_fd = socket(PF_INET, SOCK_STREAM, 0)) == -1) {
+		return PROXY_SEND_REQUEST_FAILED_S;
+	}
+
+	if (connect(p->server_fd, (struct sockaddr *)&(p->server), sizeof(p->server)) == -1) {
+		return PROXY_SEND_REQUEST_FAILED_C;
+	}
+
+	fcntl(p->server_fd, F_SETFD, O_NONBLOCK);
+	fcntl(p->client_fd, F_SETFD, O_NONBLOCK);
+
+	strcpy(last_req_tmp, p->last_request);
+	t = strtok_r(last_req_tmp, "\n", &bp);
+
+	sscanf(t, "%s %s %s", first_line[0], first_line[1], first_line[2]);
+	for (i = 0; i < strlen(first_line[1]); ++i) {
+		if (first_line[1][i] == '/' && cnt < 3) {
+			cnt++;
+		}
+		if (cnt == 3) {
+			file[k++] = first_line[1][i];
+		}
+	}
+	sprintf(request_buf, "%s %s %s", first_line[0], file, "HTTP/1.0\r\n");
+
+	while (t = strtok_r(NULL, "\n", &bp)) {
+		if (!strncmp(t, "Proxy-Connection", 16) || !strncmp(t, "Connection", 10)) {
+			strcat(request_buf, "Connection: close\r\n");
+		}
+		else if (!strncmp(t, "Keep-Alive", 10) || !strncmp(t, "If", 2)) {
+			continue;
+		}
+		else {
+			strcat(request_buf, t);
+			strcat(request_buf, "\n");
+		}
+	}
+	strcat(request_buf, "\r\n");
+
+	n = write(p->server_fd, request_buf, REQUEST_BUF_SIZE);
+	inet_ntop(AF_INET, &(p->server.sin_addr.s_addr), ip_buf, sizeof(ip_buf));
+	fprintf(stdout, "\n\nto %s write[%d]:\n%s\n", ip_buf, n, request_buf);
+
+	return PROXY_SEND_REQUEST_SUCCESS;
 }
 
 void proxy_get_response(proxy *p) {
+	char ip_buf_s[16];
+	char ip_buf_c[16];
+	int r, s;
+	char buf[REQUEST_BUF_SIZE];
 
+	inet_ntop(AF_INET, &(p->server.sin_addr.s_addr), ip_buf_s, sizeof(ip_buf_s));
+	inet_ntop(AF_INET, &(p->client.sin_addr.s_addr), ip_buf_c, sizeof(ip_buf_c));
+	while((r = read(p->server_fd, buf, REQUEST_BUF_SIZE)) > 0) {
+		fprintf(stdout, "from %s read[%d]:\n\n", ip_buf_s, r);
+		s = write(p->client_fd, buf, r);
+		fprintf(stdout, "to %s write[%d]:\n\n", ip_buf_c, s);
+		//if (r < REQUEST_BUF_SIZE)
+		//	break;
+	}
+
+	close(p->server_fd);
+	close(p->client_fd);
+	fprintf(stdout, "done===================================\n");
 }
 
-void proxy_send_response(proxy *p) {
-
-}
-
+/*	클라이언트로부터 온 request를 logging한다.
+ *
+ *	@param
+ *	struct log log_buf : log의 정보가 담긴 구조체
+ *
+ *	@return
+ *		LOG_SUCCESS : log 쓰기 성공
+ *		LOG_FAILED : log 쓰기 실패
+ */
 void proxy_log(struct log log_buf) {
 	struct tm *tm;
 	char *time;
@@ -100,4 +208,46 @@ void proxy_log(struct log log_buf) {
 	sprintf(buf, "%s: %s %s %d\n", t_buf, log_buf.ip, log_buf.url, log_buf.size);
 	write(log_fd, buf, 1024);
 	close(log_fd);
+}
+
+/*	proxy 구조체를 완성한다.
+ *
+ *	@param
+ *	proxy *p : 클라이언트와 타겟 서버의 정보를 담고있는 proxy 구조체의 포인터
+ *
+ *	@return
+ *	FLAG
+ */
+int complete_proxy_struct(proxy *p) {
+	char *req_ptr = p->last_request;
+	char server_host[128];
+	char tmp[10];
+	int i = 0;
+	int cnt = 0;
+
+	char ip_buf[16];
+	struct hostent *host_entry;
+
+	while (*req_ptr != '\0') {
+		if (!strncmp(req_ptr, "GET", 3)) {
+			sscanf(req_ptr, "%s %s", tmp, p->target_file_name);
+		}
+		else if (!strncmp(req_ptr, "Host", 4)) {
+			sscanf(req_ptr, "%s %s", tmp, server_host);
+		}
+		req_ptr++;
+	}
+
+
+	// inet_ntop(AF_INET, &(p->client.sin_addr.s_addr), ip_buf, sizeof(ip_buf));
+	printf("server_host: %s\n", server_host); 
+	if ((host_entry = gethostbyname(server_host)) == NULL)
+		return FAIL_TO_GET_HOST;
+
+	p->server.sin_addr.s_addr = inet_addr(inet_ntoa(*(struct in_addr *)host_entry->h_addr_list[0]));
+	inet_ntop(AF_INET, (struct in_addr *)host_entry->h_addr_list[0], ip_buf, sizeof(ip_buf));
+	printf("target: %s\n", ip_buf);
+
+	p->server.sin_family = AF_INET;
+	p->server.sin_port = htons(80);
 }

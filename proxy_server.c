@@ -25,8 +25,21 @@ void proxy_service(proxy *p, proxy_server *p_server) {
 		fprintf(stderr, "accept failed\n");
 		return;
 	}
-	proxy_get_request(p);
-	proxy_send_request(p);
+	switch(proxy_get_request(p)) {
+		case PROXY_GET_REQUEST_FAILED :
+			fprintf(stderr, "proxy_get_request: READ ERROR(%x)\n", PROXY_GET_REQUEST_FAILED);
+			return;
+		case PROXY_GET_REQUEST_EMPTY :
+			fprintf(stderr, "proxy_get_request: EMPTY STRING(%x)\n", PROXY_GET_REQUEST_EMPTY);
+			return;
+	}
+	switch(proxy_send_request(p)) {
+		case PROXY_SEND_REQUEST_FAILED_S :
+			fprintf(stderr, "proxy_send_request: SOCKET ERROR(%x)\n", PROXY_SEND_REQUEST_FAILED_S);
+			return;
+		case PROXY_SEND_REQUEST_FAILED_C :
+			fprintf(stderr, "proxy_send_request: CONNECT ERROR(%x)\n", PROXY_SEND_REQUEST_FAILED_C);
+			return;
+	}
 	proxy_get_response(p);
-	proxy_send_response(p);
 }
