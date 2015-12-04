@@ -13,7 +13,8 @@
 #define MAX_CACHE_SIZE 5 * 1024
 #define MAX_OBJECT_SIZE 512
 #define REQUEST_BUF_SIZE 1024 * 2
-#define PROXY_LAST_REQ_SIZE 512
+#define RESPONSE_BUF_SIZE 1024 * 10
+#define PROXY_LAST_REQ_SIZE REQUEST_BUF_SIZE
 
 #define PROXY_ACCEPT_SUCCESS 0x1000
 #define PROXY_ACCEPT_FAILED 0x1001
@@ -35,6 +36,7 @@ typedef struct {
 	size_t client_addr_size;
 	char target_file_name[100]; //target file's name
 	char last_request[PROXY_LAST_REQ_SIZE];
+	int obj_size;
 } proxy;
 
 typedef struct {
