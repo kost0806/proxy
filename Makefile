@@ -8,5 +8,5 @@ proxy.o: proxy.c
 proxy_server.o: proxy_server.c
 	gcc -c proxy_server.c
 
-clear:
-	rm proxy.o proxy_server.o proxy_server
+clean:
+	rm *.o proxy_server
